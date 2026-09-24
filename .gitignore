@@ -1,0 +1,16 @@
+.env
+*.log
+/backend/api
+node_modules/
+dist/
+.DS_Store
+.idea/
+.vscode/
+
+# Asistentes de IA (no se entregan)
+CLAUDE.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+docs/PLAN.md
