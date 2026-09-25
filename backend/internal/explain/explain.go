@@ -19,7 +19,14 @@ import (
 type Explanation struct {
 	Reason            string `json:"reason"`
 	RecommendedAction string `json:"recommended_action"`
+	Source            string `json:"-"` // SourceTemplate o SourceLLM; lo fija quien redacta, no el LLM
 }
+
+// Quién redactó la explicación.
+const (
+	SourceTemplate = "template"
+	SourceLLM      = "llm"
+)
 
 // Explainer redacta la explicación de una anomalía ya clasificada por el motor.
 type Explainer interface {

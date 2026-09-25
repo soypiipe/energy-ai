@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"encoding/json"
+	"github.com/soypiipe/energy-ai/backend/internal/explain"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,7 +21,7 @@ func analyzed(t *testing.T) (*Repository, http.Handler, string) {
 
 	run, _ := repo.Enqueue(ctx)
 	repo.Claim(ctx)
-	summary, err := NewAnalyzer(repo).Process(ctx, run, func(string) error { return nil })
+	summary, err := NewAnalyzer(repo, explain.NewTemplate()).Process(ctx, run, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

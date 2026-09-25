@@ -17,6 +17,7 @@ import (
 	"github.com/soypiipe/energy-ai/backend/internal/config"
 	"github.com/soypiipe/energy-ai/backend/internal/dashboard"
 	"github.com/soypiipe/energy-ai/backend/internal/db"
+	"github.com/soypiipe/energy-ai/backend/internal/explain"
 	"github.com/soypiipe/energy-ai/backend/internal/httpx"
 	"github.com/soypiipe/energy-ai/backend/internal/meter"
 	"github.com/soypiipe/energy-ai/backend/internal/seed"
@@ -70,12 +71,22 @@ func run() error {
 	analysis.NewHandler(analysisRepo).Register(mux)
 	dashboard.NewHandler(meterRepo, analysisRepo).Register(mux)
 
+	// Explicaciones: plantilla determinista siempre; con LLM configurado se intenta primero y la plantilla
+	// queda de respaldo. La clave nunca se loguea.
+	var explainer explain.Explainer = explain.NewTemplate()
+	if cfg.LLMEnabled() {
+		explainer = explain.NewFallback(explain.NewLLM(cfg.LLMBaseURL, cfg.LLMModel, cfg.LLMAPIKey), explainer)
+		slog.Info("explicaciones con LLM (respaldo: plantilla)", "model", cfg.LLMModel)
+	} else {
+		slog.Info("explicaciones con plantilla (LLM_API_KEY no definida)")
+	}
+
 	// El worker corre en segundo plano en el mismo proceso; se detiene con el mismo contexto de apagado.
 	var workers sync.WaitGroup
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
-		analysis.NewWorker(analysisRepo, analysis.NewAnalyzer(analysisRepo).Process).Run(ctx)
+		analysis.NewWorker(analysisRepo, analysis.NewAnalyzer(analysisRepo, explainer).Process).Run(ctx)
 	}()
 	defer workers.Wait() // el pool se cierra (defer anterior) solo después de que el worker termine
 

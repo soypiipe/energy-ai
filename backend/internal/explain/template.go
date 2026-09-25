@@ -27,6 +27,7 @@ func (Template) Explain(_ context.Context, a engine.Anomaly) (Explanation, error
 	default:
 		e = realAnomaly(a)
 	}
+	e.Source = SourceTemplate
 	return e, e.Validate()
 }
 

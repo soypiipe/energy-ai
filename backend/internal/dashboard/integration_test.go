@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/soypiipe/energy-ai/backend/internal/analysis"
+	"github.com/soypiipe/energy-ai/backend/internal/explain"
 	"github.com/soypiipe/energy-ai/backend/internal/meter"
 	"github.com/soypiipe/energy-ai/backend/internal/pgtest"
 	"github.com/soypiipe/energy-ai/backend/internal/seed"
@@ -45,7 +46,7 @@ func TestSummaryEndpointWithRealData(t *testing.T) {
 	// se analiza: M-109 crítico, M-104 y M-112 en alerta, M-106 (falso positivo) sigue OK
 	run, _ := arepo.Enqueue(ctx)
 	arepo.Claim(ctx)
-	summary, err := analysis.NewAnalyzer(arepo).Process(ctx, run, func(string) error { return nil })
+	summary, err := analysis.NewAnalyzer(arepo, explain.NewTemplate()).Process(ctx, run, func(string) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}

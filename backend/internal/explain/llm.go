@@ -170,7 +170,12 @@ func (l *LLM) Explain(ctx context.Context, a engine.Anomaly) (Explanation, error
 	if len(cr.Choices) == 0 {
 		return Explanation{}, errors.New("el LLM no devolvió opciones")
 	}
-	return parseExplanation(cr.Choices[0].Message.Content)
+	e, err := parseExplanation(cr.Choices[0].Message.Content)
+	if err != nil {
+		return Explanation{}, err
+	}
+	e.Source = SourceLLM
+	return e, nil
 }
 
 // parseExplanation extrae y valida el JSON de la respuesta. Tolera que el modelo lo envuelva en

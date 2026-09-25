@@ -17,13 +17,15 @@ type Draft struct {
 	Anomaly           engine.Anomaly
 	Reason            string
 	RecommendedAction string
+	Source            string // quién redactó: explain.SourceLLM o explain.SourceTemplate
 }
 
 // evidenceDoc es el JSON que se guarda en anomalies.evidence: todo lo que respalda la anomalía
 // (hallazgos con sus métricas y el evento relacionado). Es lo que ve la pantalla de investigación.
 type evidenceDoc struct {
-	Findings     []findingDoc `json:"findings"`
-	RelatedEvent *eventDoc    `json:"related_event"`
+	Findings          []findingDoc `json:"findings"`
+	RelatedEvent      *eventDoc    `json:"related_event"`
+	ExplanationSource string       `json:"explanation_source"` // "llm" o "template": la UI puede indicar si lo redactó IA
 }
 
 type findingDoc struct {
@@ -39,8 +41,8 @@ type eventDoc struct {
 	Description string           `json:"description"`
 }
 
-func buildEvidence(a engine.Anomaly) ([]byte, error) {
-	doc := evidenceDoc{Findings: make([]findingDoc, 0, len(a.Findings))}
+func buildEvidence(a engine.Anomaly, source string) ([]byte, error) {
+	doc := evidenceDoc{Findings: make([]findingDoc, 0, len(a.Findings)), ExplanationSource: source}
 	for _, f := range a.Findings {
 		fd := findingDoc{Kind: f.Kind, Start: f.Start.Format(localLayout), Evidence: f.Evidence}
 		if !f.End.IsZero() {
@@ -69,7 +71,7 @@ func (r *Repository) SaveAnomalies(ctx context.Context, runID string, drafts []D
 	}
 	for _, d := range drafts {
 		a := d.Anomaly
-		evidence, err := buildEvidence(a)
+		evidence, err := buildEvidence(a, d.Source)
 		if err != nil {
 			return fmt.Errorf("serializar evidencia de %s: %w", a.MeterID, err)
 		}
