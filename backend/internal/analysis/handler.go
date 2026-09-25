@@ -24,6 +24,9 @@ func NewHandler(repo *Repository) *Handler {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /ai/analyze", h.analyze)
 	mux.HandleFunc("GET /ai/analysis/{id}", h.getRun)
+	mux.HandleFunc("GET /anomalies", h.listAnomalies)
+	mux.HandleFunc("GET /anomalies/{id}", h.getAnomaly)
+	mux.HandleFunc("PATCH /anomalies/{id}", h.patchAnomaly)
 }
 
 // runResponse es lo que ve el cliente de una ejecución. El error interno (SQL, rutas, etc.) nunca
@@ -88,4 +91,93 @@ func (h *Handler) getRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, toResponse(run))
+}
+
+// listAnomalies acepta ?meter_id=M-109&type=REAL_ANOMALY&severity=HIGH&status=OPEN (todos opcionales).
+func (h *Handler) listAnomalies(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f := AnomalyFilter{MeterID: q.Get("meter_id"), Type: q.Get("type"), Severity: q.Get("severity"), Status: q.Get("status")}
+	switch {
+	case f.MeterID != "" && !meterIDPattern.MatchString(f.MeterID):
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_METER_ID", "meter_id inválido (ejemplo: M-109)")
+		return
+	case f.Type != "" && !validTypes[f.Type]:
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_TYPE", "type inválido")
+		return
+	case f.Severity != "" && !validSeverities[f.Severity]:
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_SEVERITY", "severity inválido")
+		return
+	case f.Status != "" && !validAnomalyStatus(f.Status):
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_STATUS", "status inválido")
+		return
+	}
+	analysisID, list, err := h.repo.ListAnomalies(r.Context(), f)
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"analysis_id": nilIfEmpty(analysisID), "data": list})
+}
+
+func (h *Handler) getAnomaly(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidPattern.MatchString(id) {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_ID", "id inválido")
+		return
+	}
+	a, err := h.repo.GetAnomaly(r.Context(), id)
+	if errors.Is(err, ErrAnomalyNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "ANOMALY_NOT_FOUND", "La anomalía no existe")
+		return
+	}
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+// patchAnomaly cambia solo el estado: {"status": "ACKNOWLEDGED"}. Cualquier otro campo se rechaza.
+func (h *Handler) patchAnomaly(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !uuidPattern.MatchString(id) {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_ID", "id inválido")
+		return
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_BODY", `El cuerpo debe ser {"status": "OPEN|ACKNOWLEDGED|RESOLVED"}`)
+		return
+	}
+	if !validAnomalyStatus(body.Status) {
+		httpx.WriteError(w, http.StatusBadRequest, "INVALID_STATUS", "status debe ser OPEN, ACKNOWLEDGED o RESOLVED")
+		return
+	}
+	a, err := h.repo.UpdateAnomalyStatus(r.Context(), id, body.Status)
+	if errors.Is(err, ErrAnomalyNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "ANOMALY_NOT_FOUND", "La anomalía no existe")
+		return
+	}
+	if err != nil {
+		httpx.InternalError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, a)
+}
+
+var (
+	validTypes      = map[string]bool{"REAL_ANOMALY": true, "EXPLAINABLE_ANOMALY": true, "FALSE_POSITIVE": true, "DATA_QUALITY": true}
+	validSeverities = map[string]bool{"LOW": true, "MEDIUM": true, "HIGH": true}
+	meterIDPattern  = regexp.MustCompile(`^[A-Z]{1,4}-\d{1,6}$`)
+)
+
+func nilIfEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
