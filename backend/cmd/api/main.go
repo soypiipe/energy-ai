@@ -17,10 +17,8 @@ import (
 	"github.com/soypiipe/energy-ai/backend/internal/analysis"
 	"github.com/soypiipe/energy-ai/backend/internal/auth"
 	"github.com/soypiipe/energy-ai/backend/internal/config"
-	"github.com/soypiipe/energy-ai/backend/internal/dashboard"
 	"github.com/soypiipe/energy-ai/backend/internal/db"
 	"github.com/soypiipe/energy-ai/backend/internal/explain"
-	"github.com/soypiipe/energy-ai/backend/internal/httpx"
 	"github.com/soypiipe/energy-ai/backend/internal/meter"
 	"github.com/soypiipe/energy-ai/backend/internal/seed"
 )
@@ -58,26 +56,12 @@ func run() error {
 	}
 	slog.Info("datos listos", "seed_aplicado", loaded)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		if err := pool.Ping(r.Context()); err != nil {
-			httpx.WriteError(w, http.StatusServiceUnavailable, "DB_UNAVAILABLE", "Base de datos no disponible")
-			return
-		}
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
 	authSvc, err := auth.NewService(cfg.AuthUser, cfg.AuthPasswordHash, cfg.JWTSecret, cfg.JWTTTL)
 	if err != nil {
 		return fmt.Errorf("configurar autenticación: %w", err)
 	}
-	auth.NewHandler(authSvc).Register(mux)
-
 	meterRepo := meter.NewRepository(pool)
-	meter.NewHandler(meterRepo).Register(mux)
-
 	analysisRepo := analysis.NewRepository(pool)
-	analysis.NewHandler(analysisRepo).Register(mux)
-	dashboard.NewHandler(meterRepo, analysisRepo).Register(mux)
 
 	// Explicaciones: plantilla determinista siempre; con LLM configurado se intenta primero y la plantilla
 	// queda de respaldo. La clave nunca se loguea.
@@ -98,12 +82,7 @@ func run() error {
 	}()
 	defer workers.Wait() // el pool se cierra (defer anterior) solo después de que el worker termine
 
-	handler := httpx.Chain(mux,
-		httpx.Recoverer,
-		httpx.Logger,
-		httpx.CORS(cfg.AllowedOrigins),
-		httpx.LimitBody(1<<20), // 1 MB
-	)
+	handler := newRouter(pool, cfg.AllowedOrigins, authSvc, meterRepo, analysisRepo)
 
 	// Timeouts explícitos: el servidor por defecto de Go no tiene ninguno (riesgo de Slowloris).
 	srv := &http.Server{
