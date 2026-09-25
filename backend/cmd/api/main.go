@@ -15,6 +15,7 @@ import (
 
 	"github.com/soypiipe/energy-ai/backend/internal/analysis"
 	"github.com/soypiipe/energy-ai/backend/internal/config"
+	"github.com/soypiipe/energy-ai/backend/internal/dashboard"
 	"github.com/soypiipe/energy-ai/backend/internal/db"
 	"github.com/soypiipe/energy-ai/backend/internal/httpx"
 	"github.com/soypiipe/energy-ai/backend/internal/meter"
@@ -62,10 +63,12 @@ func run() error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	meter.NewHandler(meter.NewRepository(pool)).Register(mux)
+	meterRepo := meter.NewRepository(pool)
+	meter.NewHandler(meterRepo).Register(mux)
 
 	analysisRepo := analysis.NewRepository(pool)
 	analysis.NewHandler(analysisRepo).Register(mux)
+	dashboard.NewHandler(meterRepo, analysisRepo).Register(mux)
 
 	// El worker corre en segundo plano en el mismo proceso; se detiene con el mismo contexto de apagado.
 	var workers sync.WaitGroup

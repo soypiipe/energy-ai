@@ -42,6 +42,19 @@ func (r *Repository) Enqueue(ctx context.Context) (Run, error) {
 	return run, nil
 }
 
+// LatestCompletedRun devuelve el último análisis COMPLETED, o nil si nunca se completó uno.
+func (r *Repository) LatestCompletedRun(ctx context.Context) (*Run, error) {
+	run, err := scanRun(r.pool.QueryRow(ctx,
+		`SELECT `+runColumns+` FROM analysis_runs WHERE status = 'COMPLETED' ORDER BY finished_at DESC LIMIT 1`))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consultar último análisis completado: %w", err)
+	}
+	return &run, nil
+}
+
 // ActiveRun devuelve la ejecución más antigua que sigue PENDING o RUNNING, o nil si no hay ninguna.
 func (r *Repository) ActiveRun(ctx context.Context) (*Run, error) {
 	run, err := scanRun(r.pool.QueryRow(ctx, `
