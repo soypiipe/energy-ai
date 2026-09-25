@@ -30,6 +30,10 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+    volumes:
+      # Los CSV se montan en solo lectura: permite probar otro dataset sin reconstruir la imagen.
+      # El COPY data/ del Dockerfile queda como respaldo para quien corra la imagen sin compose.
+      - ./data:/app/data:ro
     depends_on:
       db:
         condition: service_healthy

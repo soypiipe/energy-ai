@@ -117,6 +117,27 @@ modelo compatible con la API de OpenAI a partir de la evidencia del motor. Si fa
 respuesta inválida) se usa la plantilla automáticamente. La pantalla de investigación indica quién
 redactó cada explicación.
 
+## Probar con otro dataset
+
+Los CSV se montan en la API como volumen de solo lectura (`./data:/app/data:ro`), así que no hace falta
+reconstruir la imagen para cambiar de datos. (El `COPY data/` del Dockerfile queda como respaldo para quien
+ejecute la imagen sin Compose.)
+
+1. Reemplaza `data/readings.csv` y `data/events.csv` conservando las mismas columnas y el mismo formato de fecha
+   que los originales (`2026-09-01 00:00:00` en lecturas; `2026-09-11 00:00` en eventos).
+2. Recarga con una base limpia: `docker compose down -v && docker compose up --build`.
+   El `-v` borra el volumen de Postgres: el seed solo carga datos si la base está vacía, así que sin él se
+   seguirían viendo los datos anteriores.
+
+Notas:
+
+- **CSV mal formado:** el seed valida el encabezado de forma estricta. Si no coincide, la API **no arranca** y el log dice
+  qué se esperaba y qué llegó, en lugar de cargar datos corruptos. Ejemplo:
+  `readings.csv: encabezado inesperado: [... consumo ...] (se esperaba [... consumption_kwh ...])`.
+- **Umbrales del motor:** los umbrales de detección (z robusto, cambio del 25 %, banda de coherencia física kWh/V·I·FP,
+  ventana de baseline de 7 días) están calibrados para el dataset original de 12 medidores durante 14 días. Con un dataset muy
+  distinto pueden necesitar ajustes. Las constantes están al inicio de cada detector en `backend/internal/analysis/engine`.
+
 ## Desarrollo
 
 ```bash
