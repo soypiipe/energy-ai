@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -20,6 +21,12 @@ type Config struct {
 	LLMBaseURL string
 	LLMModel   string
 	LLMAPIKey  string
+
+	// Autenticación: un usuario demo con contraseña en bcrypt y tokens JWT (HS256).
+	AuthUser         string
+	AuthPasswordHash string
+	JWTSecret        string
+	JWTTTL           time.Duration
 }
 
 // LLMEnabled dice si hay configuración suficiente para usar el LLM.
@@ -38,10 +45,22 @@ func Load() (Config, error) {
 		LLMBaseURL:     getEnv("LLM_BASE_URL", "https://openrouter.ai/api/v1"),
 		LLMModel:       os.Getenv("LLM_MODEL"),
 		LLMAPIKey:      os.Getenv("LLM_API_KEY"),
+
+		AuthUser:         getEnv("AUTH_USER", "demo"),
+		AuthPasswordHash: os.Getenv("AUTH_PASSWORD_HASH"),
+		JWTSecret:        os.Getenv("JWT_SECRET"),
 	}
+	ttl, err := time.ParseDuration(getEnv("JWT_TTL", "8h"))
+	if err != nil || ttl <= 0 {
+		return Config{}, errors.New("JWT_TTL debe ser una duración positiva (ej. 8h)")
+	}
+	cfg.JWTTTL = ttl
 
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL es obligatoria")
+	}
+	if cfg.AuthPasswordHash == "" || cfg.JWTSecret == "" {
+		return Config{}, errors.New("AUTH_PASSWORD_HASH y JWT_SECRET son obligatorias (ver .env.example)")
 	}
 	if len(cfg.AllowedOrigins) == 0 {
 		return Config{}, fmt.Errorf("ALLOWED_ORIGINS no puede estar vacía")

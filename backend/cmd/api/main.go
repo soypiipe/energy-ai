@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/soypiipe/energy-ai/backend/internal/analysis"
+	"github.com/soypiipe/energy-ai/backend/internal/auth"
 	"github.com/soypiipe/energy-ai/backend/internal/config"
 	"github.com/soypiipe/energy-ai/backend/internal/dashboard"
 	"github.com/soypiipe/energy-ai/backend/internal/db"
@@ -64,6 +66,12 @@ func run() error {
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	authSvc, err := auth.NewService(cfg.AuthUser, cfg.AuthPasswordHash, cfg.JWTSecret, cfg.JWTTTL)
+	if err != nil {
+		return fmt.Errorf("configurar autenticación: %w", err)
+	}
+	auth.NewHandler(authSvc).Register(mux)
+
 	meterRepo := meter.NewRepository(pool)
 	meter.NewHandler(meterRepo).Register(mux)
 

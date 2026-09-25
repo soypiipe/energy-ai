@@ -23,6 +23,13 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-energy}:${POSTGRES_PASSWORD}@db:5432/energy?sslmode=disable
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:5173}
+      AUTH_USER: ${AUTH_USER:-demo}
+      AUTH_PASSWORD_HASH: ${AUTH_PASSWORD_HASH:?define AUTH_PASSWORD_HASH en .env (ver .env.example)}
+      JWT_SECRET: ${JWT_SECRET:?define JWT_SECRET en .env (ver .env.example)}
+      JWT_TTL: ${JWT_TTL:-8h}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
