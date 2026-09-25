@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/soypiipe/energy-ai/backend/internal/analysis"
 	"github.com/soypiipe/energy-ai/backend/internal/config"
 	"github.com/soypiipe/energy-ai/backend/internal/db"
 	"github.com/soypiipe/energy-ai/backend/internal/httpx"
@@ -61,6 +63,18 @@ func run() error {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	meter.NewHandler(meter.NewRepository(pool)).Register(mux)
+
+	analysisRepo := analysis.NewRepository(pool)
+	analysis.NewHandler(analysisRepo).Register(mux)
+
+	// El worker corre en segundo plano en el mismo proceso; se detiene con el mismo contexto de apagado.
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		analysis.NewWorker(analysisRepo, analysis.NewAnalyzer(analysisRepo).Process).Run(ctx)
+	}()
+	defer workers.Wait() // el pool se cierra (defer anterior) solo después de que el worker termine
 
 	handler := httpx.Chain(mux,
 		httpx.Recoverer,
