@@ -6,6 +6,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/soypiipe/energy-ai/backend/internal/analysis"
+	"github.com/soypiipe/energy-ai/backend/internal/apidocs"
 	"github.com/soypiipe/energy-ai/backend/internal/auth"
 	"github.com/soypiipe/energy-ai/backend/internal/dashboard"
 	"github.com/soypiipe/energy-ai/backend/internal/httpx"
@@ -13,7 +14,7 @@ import (
 )
 
 // publicRoutes son las únicas rutas que no exigen token. Cualquier ruta nueva queda protegida por defecto.
-var publicRoutes = []string{"GET /health", "POST /auth/login"}
+var publicRoutes = []string{"GET /health", "POST /auth/login", "GET /openapi.yaml", "GET /docs", "GET /docs/"}
 
 // newRouter monta todas las rutas y los middleware. Está separado de run() para poder probar el
 // conjunto completo (incluida la protección con JWT) sin arrancar un servidor.
@@ -26,6 +27,7 @@ func newRouter(pool *pgxpool.Pool, allowedOrigins []string, authSvc *auth.Servic
 		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	apidocs.Register(mux) // documentación pública (Swagger UI); no expone datos, solo describe la API
 	auth.NewHandler(authSvc).Register(mux)
 	meter.NewHandler(meters).Register(mux)
 	analysis.NewHandler(analyses).Register(mux)

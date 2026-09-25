@@ -97,3 +97,29 @@ func TestMiddlewareRejectsBadAuthorization(t *testing.T) {
 		t.Errorf("el motivo técnico no debe salir al cliente: %s", body)
 	}
 }
+
+func TestMiddlewarePrefixPublicRoutes(t *testing.T) {
+	svc := newTestService(t)
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+	mux.HandleFunc("GET /docs/", ok)
+	mux.HandleFunc("GET /meters", ok)
+	h := Middleware(svc, "GET /docs/")(mux)
+
+	for _, p := range []string{"/docs/", "/docs/swagger-ui.css", "/docs/a/b.js"} {
+		if rec := call(h, "GET", p, ""); rec.Code != http.StatusOK {
+			t.Errorf("GET %s sin token → %d, quería 200", p, rec.Code)
+		}
+	}
+	for _, c := range [][2]string{
+		{"POST", "/docs/x"},        // otro método
+		{"GET", "/docs/../meters"}, // intento de escapar del prefijo
+		{"GET", "/docs//../meters"},
+		{"GET", "/docsx/"}, // otro prefijo parecido
+		{"GET", "/meters"},
+	} {
+		if rec := call(h, c[0], c[1], ""); rec.Code == http.StatusOK {
+			t.Errorf("%s %s sin token no debía ser público (→ %d)", c[0], c[1], rec.Code)
+		}
+	}
+}

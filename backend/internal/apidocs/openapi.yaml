@@ -1,0 +1,673 @@
+openapi: 3.0.3
+info:
+  title: Voltix · API de gestión de energía con IA
+  version: 1.0.0
+  description: |
+    Voltix convierte las lecturas de los medidores eléctricos en **decisiones**: detecta anomalías, explica
+    por qué lo son, las ordena por prioridad y recomienda qué hacer.
+
+    ## Cómo usar esta documentación (en 4 pasos)
+
+    1. Abre **POST /auth/login**, pulsa *Try it out* y envía el usuario y la contraseña de la demo. Copia el `access_token`.
+    2. Pulsa el botón verde **Authorize** (arriba a la derecha), pega el token y confirma. No escribas la palabra `Bearer`.
+    3. Ya puedes probar cualquier endpoint con *Try it out*.
+    4. Para ver la magia: ejecuta **POST /ai/analyze**, espera unos segundos con **GET /ai/analysis/{id}** y mira el resultado en **GET /anomalies**.
+
+    ## Conceptos clave
+
+    | Concepto | Qué significa |
+    |---|---|
+    | **Medidor** | Un aparato que mide el consumo eléctrico cada hora (kWh), más voltaje, corriente y factor de potencia. |
+    | **Baseline** | Lo que es "normal" para un medidor: su comportamiento típico en los primeros 7 días. Todo se compara contra esto. |
+    | **Anomalía** | Algo que se sale de lo normal. Cada una tiene un **tipo**, una **severidad**, una **confianza** y una **prioridad**. |
+    | **Evento** | Algo que la planta reportó (p. ej. "nueva línea de producción"). Si un evento explica el cambio, la anomalía es menos preocupante. |
+    | **Análisis** | Una ejecución del motor sobre todos los medidores. Corre en segundo plano y tarda unos segundos. |
+
+    **Tipos de anomalía:** `REAL_ANOMALY` (nada la explica: revisar), `EXPLAINABLE_ANOMALY` (hay un evento que la explica),
+    `FALSE_POSITIVE` (desviación prevista, como un mantenimiento) y `DATA_QUALITY` (el medidor mide mal: revisar el sensor).
+
+    **Fechas:** las lecturas y eventos usan la hora local de la planta, sin zona horaria (`2026-09-12T14:00:00`).
+  contact:
+    name: Voltix
+servers:
+  - url: .
+    description: Este mismo servidor
+
+tags:
+  - name: Sistema
+    description: Comprobar que la API está viva.
+  - name: Acceso
+    description: Iniciar sesión para obtener el token que piden los demás endpoints.
+  - name: Medidores
+    description: Consultar los medidores, sus lecturas y sus eventos.
+  - name: Análisis con IA
+    description: Lanzar el análisis y seguir su progreso.
+  - name: Anomalías
+    description: Ver las anomalías detectadas, en qué orden atenderlas, y marcarlas como reconocidas o resueltas.
+  - name: Dashboard
+    description: Los números resumidos de la pantalla principal.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Sistema]
+      summary: ¿Está viva la API?
+      description: |
+        Responde `ok` si la API funciona y puede hablar con la base de datos.
+        Sirve para monitoreo. **No necesita token.**
+      security: []
+      responses:
+        '200':
+          description: Todo bien.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        '503':
+          description: La API vive pero no llega a la base de datos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [Acceso]
+      summary: Iniciar sesión
+      description: |
+        Cambia usuario y contraseña por un **token** (una "llave" temporal). Ese token se envía en los
+        demás endpoints. Dura unas horas (`expires_in` indica cuántos segundos); cuando vence hay que
+        iniciar sesión otra vez. **No necesita token.**
+
+        Por seguridad: si te equivocas muchas veces seguidas (10 en un minuto) se bloquea el acceso un rato.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Sesión iniciada. Copia `access_token` y úsalo en el botón **Authorize**.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400':
+          description: Faltan campos o el cuerpo no es el esperado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Usuario o contraseña incorrectos (no se dice cuál de los dos, a propósito).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Demasiados intentos. Espera un minuto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /meters:
+    get:
+      tags: [Medidores]
+      summary: Lista de medidores
+      description: |
+        Devuelve **todos los medidores** con lo esencial de cada uno: cuánto consumió en las últimas 24 horas,
+        cuánto es lo normal (baseline), qué tanto se desvía y en qué **estado** está.
+
+        El estado (`status`) sale del último análisis: `OK` (normal), `ALERT` (revisar) o `CRITICAL` (urgente).
+        Antes de correr el primer análisis todos aparecen como `OK`.
+      responses:
+        '200':
+          description: Los medidores.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MeterSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /meters/{meterId}:
+    get:
+      tags: [Medidores]
+      summary: Detalle de un medidor
+      description: |
+        Lo mismo que la lista, pero de **un solo medidor**, más los **eventos** que la planta reportó para él
+        (por ejemplo un mantenimiento programado o un cambio de operación).
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+      responses:
+        '200':
+          description: El medidor con sus eventos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeterDetail' }
+        '400':
+          description: El identificador no tiene el formato correcto (debe ser como `M-109`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Ese medidor no existe.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /meters/{meterId}/readings:
+    get:
+      tags: [Medidores]
+      summary: Lecturas de un medidor
+      description: |
+        Devuelve las **lecturas hora por hora** del medidor: consumo (kWh), voltaje (V), corriente (A) y factor
+        de potencia. Es lo que se usa para dibujar las gráficas.
+
+        Puedes acotar el rango con `from` y `to`; si no los pones, devuelve todo el periodo (14 días).
+      parameters:
+        - $ref: '#/components/parameters/MeterId'
+        - name: from
+          in: query
+          description: Desde cuándo (inclusive). Formato `2026-09-10T00:00:00`. Opcional.
+          schema: { type: string, example: '2026-09-10T00:00:00' }
+        - name: to
+          in: query
+          description: Hasta cuándo (inclusive). Formato `2026-09-14T23:00:00`. Opcional.
+          schema: { type: string, example: '2026-09-14T23:00:00' }
+      responses:
+        '200':
+          description: Las lecturas, ordenadas de la más antigua a la más reciente.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meter_id: { type: string, example: M-109 }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Reading' }
+        '400':
+          description: El identificador o las fechas no tienen el formato correcto, o `from` es posterior a `to`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Ese medidor no existe.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /ai/analyze:
+    post:
+      tags: [Análisis con IA]
+      summary: Lanzar el análisis (Run AI Analysis)
+      description: |
+        **Pone en marcha el análisis** de todos los medidores. Es el botón "Run AI Analysis" de la aplicación.
+
+        No espera a que termine: responde de inmediato con un `id` y el análisis sigue en segundo plano.
+        Usa ese `id` en **GET /ai/analysis/{id}** para ver el progreso.
+
+        Si ya hay un análisis en marcha, no crea otro: devuelve ese mismo (así un doble clic no duplica trabajo).
+
+        El análisis hace 4 pasos: carga los datos, detecta anomalías, redacta la explicación de cada una y guarda el resultado.
+      responses:
+        '202':
+          description: Análisis aceptado. Guarda el `id` para consultar el progreso.
+          headers:
+            Location:
+              description: Dirección para consultar el estado.
+              schema: { type: string, example: /ai/analysis/0b7c5e0e-6b0a-4a4e-9a55-0c9c0c1f1a11 }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalysisRun' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /ai/analysis/{id}:
+    get:
+      tags: [Análisis con IA]
+      summary: Ver el progreso de un análisis
+      description: |
+        Dice **en qué va** un análisis: `PENDING` (en cola), `RUNNING` (trabajando; `current_step` indica el paso),
+        `COMPLETED` (terminó; `summary` trae el resumen) o `FAILED` (falló).
+
+        Consúltalo cada segundo o dos hasta que `status` sea `COMPLETED`. Cuando termine, las anomalías estarán en **GET /anomalies**.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: El `id` que devolvió **POST /ai/analyze**.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: El estado del análisis.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalysisRun' }
+        '400':
+          description: El `id` no es un identificador válido.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Ese análisis no existe.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /anomalies:
+    get:
+      tags: [Anomalías]
+      summary: Lista de anomalías, la más urgente primero
+      description: |
+        Devuelve las anomalías del **último análisis completado**, ordenadas por **prioridad** (la primera es la
+        que hay que atender antes). Cada una trae la explicación en lenguaje claro y la acción recomendada.
+
+        Si nunca se ha corrido un análisis, la lista viene vacía.
+
+        Todos los filtros son opcionales y se pueden combinar.
+      parameters:
+        - name: meter_id
+          in: query
+          description: Solo las anomalías de este medidor.
+          schema: { type: string, example: M-109 }
+        - name: type
+          in: query
+          description: Solo de este tipo.
+          schema: { $ref: '#/components/schemas/AnomalyType' }
+        - name: severity
+          in: query
+          description: Solo con esta severidad.
+          schema: { $ref: '#/components/schemas/Severity' }
+        - name: status
+          in: query
+          description: Solo en este estado de seguimiento.
+          schema: { $ref: '#/components/schemas/AnomalyStatus' }
+      responses:
+        '200':
+          description: Las anomalías (puede ser una lista vacía).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  analysis_id:
+                    type: string
+                    format: uuid
+                    nullable: true
+                    description: El análisis del que salen. `null` si todavía no hay ninguno.
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Anomaly' }
+        '400':
+          description: Algún filtro tiene un valor no permitido.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /anomalies/{id}:
+    get:
+      tags: [Anomalías]
+      summary: Detalle de una anomalía (investigación)
+      description: |
+        Todo sobre **una anomalía**: qué pasó, por qué lo dice el motor, y qué hacer.
+
+        Incluye la **evidencia**: qué se detectó, desde cuándo, y cuánto cambió cada medida frente a lo normal.
+        También dice si hay un evento cercano y si ese evento explica el cambio. Esta es la información de la pantalla de "Investigación".
+      parameters:
+        - $ref: '#/components/parameters/AnomalyId'
+      responses:
+        '200':
+          description: La anomalía con su evidencia.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Anomaly' }
+        '400':
+          description: El `id` no es un identificador válido.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Esa anomalía no existe.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    patch:
+      tags: [Anomalías]
+      summary: Cambiar el estado de seguimiento de una anomalía
+      description: |
+        Sirve para llevar el **seguimiento**: marcar que ya la viste (`ACKNOWLEDGED`), que ya la resolviste
+        (`RESOLVED`), o volver a abrirla (`OPEN`).
+
+        Solo se puede cambiar el estado. El tipo, la severidad y los números los calcula el motor y no se editan.
+      parameters:
+        - $ref: '#/components/parameters/AnomalyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/AnomalyStatus' }
+      responses:
+        '200':
+          description: La anomalía ya con el nuevo estado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Anomaly' }
+        '400':
+          description: El `id` no es válido, el estado no es uno de los permitidos, o se enviaron campos de más.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: Esa anomalía no existe.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /dashboard/summary:
+    get:
+      tags: [Dashboard]
+      summary: Resumen para la pantalla principal
+      description: |
+        Los **números clave de un vistazo**: cuántos medidores hay y en qué estado, cuánto se consumió en las últimas
+        24 horas frente a lo normal, cuántas anomalías hay abiertas, **cuál atender primero** (`top_priority`) y cuándo fue el último análisis.
+      responses:
+        '200':
+          description: El resumen.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardSummary' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Pega aquí el `access_token` que devuelve **POST /auth/login** (sin la palabra Bearer).
+
+  parameters:
+    MeterId:
+      name: meterId
+      in: path
+      required: true
+      description: El identificador del medidor, por ejemplo `M-109`.
+      schema: { type: string, pattern: '^[A-Z]{1,4}-[0-9]{1,6}$', example: M-109 }
+    AnomalyId:
+      name: id
+      in: path
+      required: true
+      description: El `id` de la anomalía (sale en **GET /anomalies**).
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Falta el token, o es inválido o ya venció. Inicia sesión otra vez con **POST /auth/login**.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      description: Todos los errores tienen esta forma.
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: INVALID_METER_ID, description: Un código corto para programas. }
+            message: { type: string, example: 'meterId inválido (ejemplo: M-109)', description: Explicación para personas. }
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, example: demo }
+        password: { type: string, format: password, example: tu-contraseña }
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token: { type: string, description: 'El token. Cópialo al botón Authorize.' }
+        token_type: { type: string, example: Bearer }
+        expires_in: { type: integer, example: 28800, description: 'Segundos que dura el token.' }
+
+    MeterStatus:
+      type: string
+      enum: [OK, ALERT, CRITICAL]
+      description: '`OK` normal · `ALERT` requiere revisión · `CRITICAL` urgente. Sale del último análisis.'
+
+    Severity:
+      type: string
+      enum: [LOW, MEDIUM, HIGH]
+      description: 'Qué tan grave es: `LOW` baja · `MEDIUM` media · `HIGH` alta.'
+
+    AnomalyType:
+      type: string
+      enum: [REAL_ANOMALY, EXPLAINABLE_ANOMALY, FALSE_POSITIVE, DATA_QUALITY]
+      description: |
+        `REAL_ANOMALY`: se salió de lo normal y nada lo explica. Hay que revisarlo.
+        `EXPLAINABLE_ANOMALY`: se salió de lo normal, pero un evento reportado lo explica.
+        `FALSE_POSITIVE`: parecía un problema pero estaba previsto (p. ej. un mantenimiento).
+        `DATA_QUALITY`: las lecturas no tienen sentido físico; el problema es el sensor, no el consumo.
+
+    AnomalyStatus:
+      type: string
+      enum: [OPEN, ACKNOWLEDGED, RESOLVED]
+      description: 'Seguimiento: `OPEN` abierta · `ACKNOWLEDGED` vista · `RESOLVED` resuelta.'
+
+    MeterSummary:
+      type: object
+      properties:
+        meter_id: { type: string, example: M-109 }
+        name: { type: string, example: Medidor M-109 }
+        location: { type: string, nullable: true, description: Dónde está instalado (si se conoce). }
+        total_kwh: { type: number, example: 17526.4, description: Consumo de todo el periodo (kWh). }
+        current_kwh: { type: number, example: 2208.3, description: Consumo de las últimas 24 horas (kWh). }
+        baseline_kwh: { type: number, example: 1049.1, description: Consumo diario normal (kWh), según los primeros 7 días. }
+        variation_pct: { type: number, example: 110.5, description: 'Cuánto se aleja de lo normal, en %. Positivo = consume más.' }
+        status: { $ref: '#/components/schemas/MeterStatus' }
+        anomaly_type:
+          allOf: [{ $ref: '#/components/schemas/AnomalyType' }]
+          nullable: true
+          description: Tipo de la anomalía principal del medidor. `null` si no tiene.
+        severity:
+          allOf: [{ $ref: '#/components/schemas/Severity' }]
+          nullable: true
+        last_reading_at: { type: string, example: '2026-09-14T23:00:00', description: Hora de la última lectura (hora local de la planta). }
+
+    Event:
+      type: object
+      properties:
+        timestamp: { type: string, example: '2026-09-12T14:00:00' }
+        type:
+          type: string
+          enum: [OPERATIONAL_CHANGE, SCHEDULED_OUTAGE, DATA_QUALITY, UNKNOWN]
+          description: |
+            `OPERATIONAL_CHANGE` cambio de operación · `SCHEDULED_OUTAGE` apagado programado ·
+            `DATA_QUALITY` problema con los datos · `UNKNOWN` sin causa reportada.
+        description: { type: string, example: No operational event reported }
+
+    MeterDetail:
+      allOf:
+        - $ref: '#/components/schemas/MeterSummary'
+        - type: object
+          properties:
+            events:
+              type: array
+              items: { $ref: '#/components/schemas/Event' }
+
+    Reading:
+      type: object
+      properties:
+        timestamp: { type: string, example: '2026-09-12T14:00:00' }
+        consumption_kwh: { type: number, example: 92.8, description: Energía consumida en esa hora. }
+        voltage_v: { type: number, example: 218.4, description: Voltaje (V). }
+        current_a: { type: number, example: 424.7, description: Corriente (A). }
+        power_factor: { type: number, example: 0.74, description: 'Factor de potencia (0 a 1). Más cerca de 1 es más eficiente.' }
+        status: { type: string, example: OK, description: 'Estado que reporta el propio medidor. No es confiable: casi siempre dice OK.' }
+
+    AnalysisRun:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, COMPLETED, FAILED]
+          description: '`PENDING` en cola · `RUNNING` trabajando · `COMPLETED` terminó · `FAILED` falló.'
+        current_step:
+          type: string
+          nullable: true
+          enum: [loading_data, detecting_anomalies, explaining, saving_results]
+          description: 'El paso en el que va: cargando datos, detectando anomalías, redactando explicaciones o guardando.'
+        error: { type: string, nullable: true, description: 'Mensaje genérico si falló (el detalle técnico queda en el servidor).' }
+        summary:
+          type: object
+          nullable: true
+          description: Resumen del resultado. Solo cuando `status` es `COMPLETED`.
+          properties:
+            meters_analyzed: { type: integer, example: 12 }
+            anomalies: { type: integer, example: 4 }
+            by_type:
+              type: object
+              additionalProperties: { type: integer }
+              example: { REAL_ANOMALY: 1, DATA_QUALITY: 1, EXPLAINABLE_ANOMALY: 1, FALSE_POSITIVE: 1 }
+            explained_by:
+              type: object
+              additionalProperties: { type: integer }
+              description: 'Cuántas explicaciones redactó cada fuente: `llm` (modelo de IA) o `template` (plantilla de respaldo).'
+              example: { template: 4 }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        finished_at: { type: string, format: date-time, nullable: true }
+
+    Evidence:
+      type: object
+      description: Una medida comparada con lo normal.
+      properties:
+        metric:
+          type: string
+          example: consumption_kwh
+          description: 'Qué se midió: `consumption_kwh`, `power_factor`, `current_a`, `voltage_v`, `kwh_vi_ratio` (coherencia física) o `flagged_readings`.'
+        baseline: { type: number, example: 44.07, description: El valor normal. }
+        observed: { type: number, example: 92.77, description: El valor que se observó. }
+        change_pct: { type: number, example: 110.5, description: 'Cambio en %.' }
+
+    Finding:
+      type: object
+      description: Algo que detectó el motor.
+      properties:
+        kind:
+          type: string
+          enum: [PERSISTENT_SHIFT, TRANSIENT_DEVIATION, ELECTRICAL_CHANGE, DATA_QUALITY]
+          description: |
+            `PERSISTENT_SHIFT` cambio de nivel que se sostiene · `TRANSIENT_DEVIATION` desviación que dura unas horas y vuelve ·
+            `ELECTRICAL_CHANGE` cambio en corriente, voltaje o factor de potencia · `DATA_QUALITY` lecturas incoherentes.
+        start: { type: string, example: '2026-09-12T14:00:00' }
+        end: { type: string, nullable: true, description: 'Cuándo terminó. `null` si sigue pasando.' }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/Evidence' }
+
+    AnomalyEvidence:
+      type: object
+      description: Todo lo que respalda la anomalía.
+      properties:
+        findings:
+          type: array
+          items: { $ref: '#/components/schemas/Finding' }
+        related_event:
+          type: object
+          nullable: true
+          description: 'El evento reportado más cercano (a ±2 horas del inicio). `null` si no hay ninguno.'
+          properties:
+            timestamp: { type: string }
+            type: { type: string, example: UNKNOWN }
+            description: { type: string }
+        explanation_source:
+          type: string
+          enum: [llm, template]
+          description: 'Quién redactó la explicación: `llm` (modelo de IA) o `template` (plantilla determinista de respaldo).'
+
+    Anomaly:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        analysis_id: { type: string, format: uuid, description: El análisis que la generó. }
+        meter_id: { type: string, example: M-109 }
+        meter_name: { type: string, example: Medidor M-109 }
+        detected_at: { type: string, example: '2026-09-12T14:00:00', description: Desde cuándo ocurre. }
+        type: { $ref: '#/components/schemas/AnomalyType' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        confidence: { type: number, minimum: 0, maximum: 1, example: 0.93, description: 'Qué tan seguro está el motor (0 a 1).' }
+        priority_score: { type: number, example: 2.79, description: 'Puntaje de urgencia: mientras más alto, antes hay que atenderla.' }
+        reason: { type: string, description: 'Por qué es una anomalía, en lenguaje claro.' }
+        recommended_action: { type: string, description: 'Qué hacer al respecto.' }
+        evidence: { $ref: '#/components/schemas/AnomalyEvidence' }
+        status: { $ref: '#/components/schemas/AnomalyStatus' }
+        created_at: { type: string, format: date-time }
+
+    DashboardSummary:
+      type: object
+      properties:
+        meters:
+          type: object
+          description: Cuántos medidores hay en cada estado.
+          properties:
+            total: { type: integer, example: 12 }
+            ok: { type: integer, example: 9 }
+            alert: { type: integer, example: 2 }
+            critical: { type: integer, example: 1 }
+        consumption:
+          type: object
+          description: Consumo sumando todos los medidores.
+          properties:
+            total_kwh: { type: number, description: Todo el periodo. }
+            current_kwh: { type: number, description: Últimas 24 horas. }
+            baseline_kwh: { type: number, description: Lo normal para 24 horas. }
+            variation_pct: { type: number, description: 'Diferencia entre lo actual y lo normal, en %.' }
+        anomalies:
+          type: object
+          description: Las anomalías del último análisis.
+          properties:
+            total: { type: integer, example: 4 }
+            open: { type: integer, example: 4, description: Las que siguen sin atender. }
+            by_severity:
+              type: object
+              additionalProperties: { type: integer }
+              example: { HIGH: 2, MEDIUM: 1, LOW: 1 }
+            by_type:
+              type: object
+              additionalProperties: { type: integer }
+        top_priority:
+          type: object
+          nullable: true
+          description: '**La anomalía que hay que atender primero.** `null` si no hay anomalías.'
+          properties:
+            anomaly_id: { type: string, format: uuid }
+            meter_id: { type: string, example: M-109 }
+            type: { $ref: '#/components/schemas/AnomalyType' }
+            severity: { $ref: '#/components/schemas/Severity' }
+        last_analysis:
+          type: object
+          nullable: true
+          description: El último análisis completado. `null` si nunca se ha corrido.
+          properties:
+            id: { type: string, format: uuid }
+            finished_at: { type: string, format: date-time, nullable: true }

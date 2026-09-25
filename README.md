@@ -135,6 +135,16 @@ npm run build
 Para los tests de integración levanta un Postgres desechable:
 `docker run -d --name energy-ai-testdb -e POSTGRES_PASSWORD=test -p 127.0.0.1:55433:5432 postgres:16-alpine`.
 
+## Documentación de la API (Swagger)
+
+Cada endpoint está explicado en lenguaje sencillo, con ejemplos y botón **Try it out**:
+
+- Con Docker Compose: http://localhost:5173/api/docs/ (o directo en la API: http://localhost:8080/docs/)
+- La especificación OpenAPI 3 está en `backend/internal/apidocs/openapi.yaml` y también se sirve en `/openapi.yaml`.
+
+Para probar: **POST /auth/login** → copia el `access_token` → botón **Authorize** → ya puedes ejecutar los demás.
+La interfaz va embebida en el binario (sin CDN), así funciona sin internet. La documentación es pública; los endpoints siguen exigiendo token.
+
 ## API
 
 Todas requieren `Authorization: Bearer <token>` salvo las dos primeras.

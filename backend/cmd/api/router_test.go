@@ -44,6 +44,19 @@ func TestRouterAuthProtection(t *testing.T) {
 	}
 	const id = "00000000-0000-0000-0000-000000000000"
 
+	// documentación pública: la especificación y la interfaz Swagger UI cargan sin token
+	for _, p := range []string{"/openapi.yaml", "/docs/", "/docs/swagger-ui.css", "/docs/init.js"} {
+		if rec := do("GET", p, "", ""); rec.Code != 200 || rec.Body.Len() == 0 {
+			t.Errorf("GET %s sin token → %d", p, rec.Code)
+		}
+	}
+	if rec := do("GET", "/docs", "", ""); rec.Code != http.StatusMovedPermanently {
+		t.Errorf("/docs → %d, quería redirección a /docs/", rec.Code)
+	}
+	if rec := do("GET", "/openapi.yaml", "", ""); !strings.Contains(rec.Body.String(), "openapi: 3.0.3") {
+		t.Error("la especificación no es OpenAPI 3")
+	}
+
 	// públicas: sin token
 	if rec := do("GET", "/health", "", ""); rec.Code != 200 {
 		t.Errorf("/health → %d", rec.Code)

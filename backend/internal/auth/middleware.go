@@ -3,6 +3,7 @@ package auth
 import (
 	"log/slog"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/soypiipe/energy-ai/backend/internal/httpx"
@@ -11,16 +12,38 @@ import (
 // Middleware exige un token válido en todas las rutas salvo las públicas. Es una lista blanca:
 // una ruta nueva queda protegida por defecto y hay que declarar explícitamente que es pública.
 //
-// public son pares exactos "MÉTODO /ruta" (p. ej. "GET /health"). La comparación es literal sobre la
-// ruta recibida, así que variantes como "/health/" o "/health/../meters" NO son públicas.
+// public son pares "MÉTODO /ruta" (p. ej. "GET /health"). La comparación es literal sobre la ruta
+// recibida, así que variantes como "/health/" o "/health/../meters" NO son públicas. Una entrada que
+// termina en "/" (p. ej. "GET /docs/") es un prefijo, pero solo para rutas ya limpias (sin "..", "//" ni ".").
 func Middleware(svc *Service, public ...string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(public))
+	var prefixes []string
 	for _, p := range public {
+		if strings.HasSuffix(p, "/") && strings.Count(p, " ") == 1 && !strings.HasSuffix(p, " /") {
+			prefixes = append(prefixes, p)
+			continue
+		}
 		allowed[p] = true
+	}
+	isPublic := func(r *http.Request) bool {
+		key := r.Method + " " + r.URL.Path
+		if allowed[key] {
+			return true
+		}
+		clean := path.Clean(r.URL.Path)
+		if r.URL.Path != clean && r.URL.Path != clean+"/" {
+			return false // ruta sin normalizar ("..", "//", "."): nunca es pública por prefijo
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(key, p) {
+				return true
+			}
+		}
+		return false
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if allowed[r.Method+" "+r.URL.Path] {
+			if isPublic(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
