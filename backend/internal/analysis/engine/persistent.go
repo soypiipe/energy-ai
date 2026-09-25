@@ -22,6 +22,11 @@ const (
 //
 // readings debe estar ordenado por tiempo. Devuelve los hallazgos en orden cronológico.
 func DetectPersistentShift(readings []Reading, b Baseline) []Finding {
+	return detectShifts(readings, b, shiftThreshold, FindingPersistentShift)
+}
+
+// detectShifts es la lógica común de "racha sostenida fuera de 1±threshold" sobre la métrica del baseline.
+func detectShifts(readings []Reading, b Baseline, threshold float64, kind FindingKind) []Finding {
 	if len(readings) < shiftMinHours {
 		return nil
 	}
@@ -32,16 +37,16 @@ func DetectPersistentShift(readings []Reading, b Baseline) []Finding {
 			ratio[i] = 1 // sin referencia válida: no aporta señal
 			continue
 		}
-		ratio[i] = r.ConsumptionKWh / exp
+		ratio[i] = b.Metric.Value(r) / exp
 	}
 	dir := make([]int, len(readings)) // +1 sube, -1 baja, 0 normal
 	for i := range ratio {
 		lo, hi := max(i-1, 0), min(i+1, len(ratio)-1)
 		m := median(ratio[lo : hi+1])
 		switch {
-		case m >= 1+shiftThreshold:
+		case m >= 1+threshold:
 			dir[i] = 1
-		case m <= 1-shiftThreshold:
+		case m <= 1-threshold:
 			dir[i] = -1
 		}
 	}
@@ -57,7 +62,9 @@ func DetectPersistentShift(readings []Reading, b Baseline) []Finding {
 			j++
 		}
 		if j-i >= shiftMinHours {
-			out = append(out, shiftFinding(readings, b, i, j, len(readings)))
+			f := shiftFinding(readings, b, i, j, len(readings))
+			f.Kind = kind
+			out = append(out, f)
 		}
 		i = j
 	}
@@ -68,14 +75,14 @@ func DetectPersistentShift(readings []Reading, b Baseline) []Finding {
 func shiftFinding(readings []Reading, b Baseline, i, j, n int) Finding {
 	var sumObs, sumExp float64
 	for _, r := range readings[i:j] {
-		sumObs += r.ConsumptionKWh
+		sumObs += b.Metric.Value(r)
 		sumExp += b.Expected(r.Timestamp)
 	}
 	cnt := float64(j - i)
 	f := Finding{
 		Kind:     FindingPersistentShift,
 		Start:    readings[i].Timestamp,
-		Evidence: []Evidence{newEvidence(MetricConsumption, sumExp/cnt, sumObs/cnt)},
+		Evidence: []Evidence{newEvidence(b.Metric, sumExp/cnt, sumObs/cnt)},
 	}
 	if j < n {
 		f.End = readings[j-1].Timestamp
