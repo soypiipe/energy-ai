@@ -21,11 +21,22 @@ const (
 //     acompaña de cambios eléctricos; MEDIUM si es un cambio persistente menor, un problema eléctrico
 //     eléctrico aislado; LOW si es solo una desviación transitoria (<50%) sin explicación.
 //
+// Confianza y prioridad se calculan en score.go.
+//
 // La correlación con eventos se hace desde el inicio del hallazgo principal: persistente, luego
 // transitorio, luego eléctrico (y dentro de cada tipo, el de mayor magnitud).
 func Classify(meterID string, findings []Finding, events []Event) *Anomaly {
+	a, primary := classify(meterID, findings, events)
+	if a != nil {
+		a.Confidence, a.PriorityScore = score(a, primary)
+	}
+	return a
+}
+
+// classify aplica las reglas y devuelve además el hallazgo principal, que necesita el puntaje.
+func classify(meterID string, findings []Finding, events []Event) (*Anomaly, Finding) {
 	if len(findings) == 0 {
-		return nil
+		return nil, Finding{}
 	}
 	byKind := map[FindingKind][]Finding{}
 	for _, f := range findings {
@@ -36,7 +47,7 @@ func Classify(meterID string, findings []Finding, events []Event) *Anomaly {
 	if dq := byKind[FindingDataQuality]; len(dq) > 0 {
 		a.Type, a.Severity, a.DetectedAt = AnomalyDataQuality, SeverityHigh, dq[0].Start
 		a.RelatedEvent, _ = CorrelateEvent(dq[0], events)
-		return a
+		return a, dq[0]
 	}
 
 	primary := primaryFinding(byKind)
@@ -62,7 +73,7 @@ func Classify(meterID string, findings []Finding, events []Event) *Anomaly {
 			a.Severity = SeverityLow
 		}
 	}
-	return a
+	return a, primary
 }
 
 // primaryFinding elige el hallazgo que define la anomalía: persistente > transitorio > eléctrico.
