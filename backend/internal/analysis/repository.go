@@ -119,6 +119,14 @@ func (r *Repository) RequeueStuck(ctx context.Context, olderThan time.Duration) 
 	return tag.RowsAffected(), nil
 }
 
+// Requeue devuelve a PENDING una ejecución RUNNING (p. ej. el worker se apagó a mitad de camino).
+func (r *Repository) Requeue(ctx context.Context, id string) error {
+	return r.mustAffectOne(ctx, id, `
+		UPDATE analysis_runs
+		SET status = 'PENDING', started_at = NULL, current_step = NULL
+		WHERE id = $1 AND status = 'RUNNING'`)
+}
+
 // mustAffectOne ejecuta un UPDATE por id y falla si no tocó exactamente una fila
 // (id inexistente o estado incorrecto: p. ej. completar algo que no está RUNNING).
 func (r *Repository) mustAffectOne(ctx context.Context, id, sql string, args ...any) error {
