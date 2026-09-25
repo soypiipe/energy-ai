@@ -1,34 +1,173 @@
-# AI Energy Management Platform
+# Voltix · AI Energy Management Platform
 
 MVP que convierte lecturas de medidores eléctricos en decisiones operativas: detecta anomalías,
 las explica con evidencia, las prioriza y recomienda una acción.
 
-> En construcción. Diseño y decisiones: [`docs/DESIGN.md`](docs/DESIGN.md).
+No es un CRUD: es una herramienta de **triage**. El operador entiende en segundos **qué medidor
+atender primero, por qué y qué hacer**.
+
+```
+DATOS → ANÁLISIS → ANOMALÍA → EXPLICACIÓN → PRIORIZACIÓN → ACCIÓN
+```
 
 ## Arranque rápido
 
+Requisitos: Docker y Docker Compose.
+
 ```bash
-cp .env.example .env          # y cambia POSTGRES_PASSWORD
+cp .env.example .env
+```
+
+Edita `.env`:
+
+1. `POSTGRES_PASSWORD`: la clave de la base.
+2. `AUTH_PASSWORD_HASH`: hash bcrypt de la contraseña del usuario demo:
+   ```bash
+   echo -n 'tu-clave-de-8+-caracteres' | docker run --rm -i -v "$PWD/backend":/src \
+     -v energy-ai-gomod:/go/pkg/mod -w /src golang:1.24-alpine go run ./cmd/hashpw
+   ```
+   El hash lleva `$`: en `.env` va **entre comillas simples**.
+3. `JWT_SECRET`: al menos 32 caracteres aleatorios (`openssl rand -hex 32`).
+4. Opcional: `LLM_API_KEY` y `LLM_MODEL` para explicaciones redactadas por un LLM (ver más abajo).
+
+```bash
 docker compose up --build
-curl http://localhost:8080/meters
 ```
 
-Al primer arranque, la API aplica las migraciones y carga `data/*.csv` (solo si la base está vacía).
+| Servicio | URL |
+|---|---|
+| Web | http://localhost:5173 |
+| API | http://localhost:8080 (o `API_HOST_PORT`) |
 
-## Desarrollo del backend
+Entra con usuario `demo` y la contraseña que hayas hasheado. Al primer arranque la API aplica las
+migraciones y carga `data/*.csv` (solo si la base está vacía).
+
+### Recorrido de la demo
+
+Login → **Dashboard** → **Medidores** → detalle de **M-109** → **Run AI Analysis** → anomalía →
+explicación y acción recomendada.
+
+Resultado esperado del análisis sobre los datos incluidos:
+
+| Medidor | Tipo | Severidad | Por qué |
+|---|---|---|---|
+| M-109 | Anomalía real | Alta (1.º) | +110% de consumo desde el 12-sep 14:00, corriente ×2, FP 0,94→0,74, sin evento que lo explique |
+| M-112 | Calidad de datos | Alta | El consumo no cuadra con V·I·FP: sensor incoherente desde el 13-sep |
+| M-104 | Explicable | Media | +47% desde el 11-sep; coincide con "nueva línea de producción" |
+| M-106 | Falso positivo | Baja | Caída de 12 h el 8-sep; coincide con mantenimiento programado |
+| Los otros 8 | — | — | Cero anomalías |
+
+## Arquitectura
+
+```
+Vue SPA ──/api (nginx)──► API Go (net/http)
+                            ├── meter      lectura de medidores, lecturas y eventos
+                            ├── analysis   API + cola + worker + motor puro (engine/)
+                            ├── explain    Explainer: plantilla | LLM OpenAI-compatible
+                            ├── dashboard  KPIs
+                            ├── auth       login (bcrypt) + JWT + middleware
+                            └── db         pool pgx, migraciones embebidas, seed
+                                     │
+                                     ▼
+                                PostgreSQL (datos + cola analysis_runs)
+```
+
+Flujo de **Run AI Analysis**: `POST /ai/analyze` (202) encola una fila en `analysis_runs`; un worker la
+toma con `FOR UPDATE SKIP LOCKED`, carga datos, corre el motor, redacta las explicaciones y guarda las
+anomalías con su evidencia (JSONB). La web consulta `GET /ai/analysis/{id}` y muestra el progreso paso a paso.
+
+### El motor de análisis (`backend/internal/analysis/engine`)
+
+Funciones puras, sin base de datos ni HTTP, 100% testeables y deterministas:
+
+1. **Baseline** por medidor y hora del día: mediana + MAD de los primeros 7 días.
+2. **Detectores**: cambio persistente (≥24 h, ±25%), desviación transitoria (z robusto, vuelve a lo normal),
+   cambios eléctricos (FP, corriente, voltaje) y calidad de datos (razón física kWh ≈ V·I·FP).
+3. **Correlación con eventos** a ±2 h del inicio. `OPERATIONAL_CHANGE` y `SCHEDULED_OUTAGE` explican;
+   `UNKNOWN` no.
+4. **Clasificación** por reglas en orden: DATA_QUALITY → FALSE_POSITIVE → EXPLAINABLE → REAL.
+5. **Confianza y prioridad** con fórmulas documentadas en `score.go`
+   (prioridad = severidad × magnitud × confianza).
+
+### Decisiones de diseño
+
+| Decisión | Por qué |
+|---|---|
+| Monolito modular en Go con `net/http` y `pgx` (SQL plano) | Volumen mínimo: un despliegue simple, sin magia ni ORM |
+| Cola de trabajos en PostgreSQL (`SKIP LOCKED`) | Transaccional, sobrevive reinicios y soporta varios workers sin infraestructura extra |
+| Estadística robusta + reglas explícitas, sin ML supervisado | 12 medidores y sin etiquetas: un modelo sobreajustaría, y aquí se premia la explicabilidad |
+| El LLM solo **redacta**, no decide | Evita alucinaciones: tipo, severidad y cifras salen del motor y son auditables |
+| Plantilla determinista de respaldo | La demo nunca depende de la red ni de una clave: el análisis funciona igual con y sin LLM |
+| Timestamps sin zona horaria | Los CSV traen hora local de planta; mostrarlos como UTC sería falso |
+| Vue 3 + TypeScript + PrimeVue + ECharts | Tablas con filtro/orden y gráficas listas; tema oscuro propio (Voltix) como preset |
+
+### Seguridad
+
+Secretos solo por variables de entorno · contraseña con bcrypt y JWT HS256 con expiración (solo se acepta
+HS256) · todas las rutas exigen token salvo `/health` y `/auth/login` (lista blanca) · límite de intentos
+de login por IP · SQL siempre parametrizado · validación de parámetros de ruta y de filtros · errores
+internos nunca llegan al cliente · CORS con lista blanca y límite de tamaño del body · timeouts del
+servidor · contenedores sin privilegios (distroless y nginx-unprivileged) con CSP · la clave del LLM
+nunca sale del backend ni se registra en logs.
+
+## LLM opcional
+
+Con `LLM_API_KEY` y `LLM_MODEL` (y `LLM_BASE_URL`, por defecto OpenRouter), las explicaciones las redacta un
+modelo compatible con la API de OpenAI a partir de la evidencia del motor. Si falla (red, timeout,
+respuesta inválida) se usa la plantilla automáticamente. La pantalla de investigación indica quién
+redactó cada explicación.
+
+## Desarrollo
 
 ```bash
+# Backend (Go 1.24)
 cd backend
-go mod tidy                   # la primera vez: descarga dependencias y genera go.sum
-go test ./...
-DATABASE_URL="postgres://energy:<clave>@localhost:5432/energy?sslmode=disable" go run ./cmd/api
+go test ./...                     # los tests de integración se saltan sin TEST_DATABASE_URL
+TEST_DATABASE_URL="postgres://postgres:test@127.0.0.1:55433/postgres?sslmode=disable" go test ./...
+
+# Frontend
+cd frontend
+npm install
+npm run dev                       # http://localhost:5173, reenvía /api al backend (VITE_API_PROXY)
+npm run build
 ```
 
-## API disponible
+Para los tests de integración levanta un Postgres desechable:
+`docker run -d --name energy-ai-testdb -e POSTGRES_PASSWORD=test -p 127.0.0.1:55433:5432 postgres:16-alpine`.
+
+## API
+
+Todas requieren `Authorization: Bearer <token>` salvo las dos primeras.
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/health` | Estado de la API y la base de datos |
-| GET | `/meters` | Medidores con consumo actual, baseline, variación y estado |
-| GET | `/meters/{meterId}` | Detalle del medidor y sus eventos |
-| GET | `/meters/{meterId}/readings?from=&to=` | Lecturas horarias (formato `2026-09-12T14:00:00`) |
+| GET | `/health` | Estado de la API y la base |
+| POST | `/auth/login` | `{username, password}` → JWT |
+| GET | `/meters` | Medidores con consumo, baseline, variación y estado |
+| GET | `/meters/{meterId}` | Detalle y eventos |
+| GET | `/meters/{meterId}/readings?from=&to=` | Lecturas horarias |
+| POST | `/ai/analyze` | Encola un análisis (202) |
+| GET | `/ai/analysis/{id}` | Estado y paso actual |
+| GET | `/anomalies?meter_id=&type=&severity=&status=` | Anomalías del último análisis, por prioridad |
+| GET | `/anomalies/{id}` | Detalle con evidencia |
+| PATCH | `/anomalies/{id}` | Cambia el estado (`OPEN`, `ACKNOWLEDGED`, `RESOLVED`) |
+| GET | `/dashboard/summary` | KPIs |
+
+## Limitaciones
+
+- Un solo usuario demo; sin registro, roles ni refresh tokens (el token dura `JWT_TTL`, 8 h por defecto).
+- El token vive en `localStorage`: práctico para una SPA, pero expuesto si hubiera XSS (la CSP lo mitiga).
+- El análisis recorre todo el dataset (14 días, 12 medidores). Con datos en streaming habría que analizar
+  por ventanas y guardar el baseline.
+- Los umbrales se calibraron con estos datos; con otra flota habría que ajustarlos o aprenderlos.
+- No se valida que los números del texto del LLM coincidan con la evidencia (solo forma y longitud);
+  por eso el prompt le prohíbe inventar cifras y la plantilla es la referencia.
+- El límite de intentos de login es en memoria (un solo proceso).
+
+## Siguientes pasos
+
+- Baselines por día de la semana y estacionalidad; umbrales adaptativos por medidor.
+- Verificar automáticamente que las cifras del LLM coincidan con la evidencia.
+- Notificaciones (correo/Slack) para anomalías de severidad alta.
+- Usuarios y roles, y refresh tokens con cookies `HttpOnly`.
+- Ingesta continua de lecturas y análisis programado.
