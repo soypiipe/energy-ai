@@ -42,6 +42,22 @@ func (r *Repository) Enqueue(ctx context.Context) (Run, error) {
 	return run, nil
 }
 
+// ActiveRun devuelve la ejecución más antigua que sigue PENDING o RUNNING, o nil si no hay ninguna.
+func (r *Repository) ActiveRun(ctx context.Context) (*Run, error) {
+	run, err := scanRun(r.pool.QueryRow(ctx, `
+		SELECT `+runColumns+` FROM analysis_runs
+		WHERE status IN ('PENDING','RUNNING')
+		ORDER BY created_at
+		LIMIT 1`))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("consultar análisis activo: %w", err)
+	}
+	return &run, nil
+}
+
 // Claim toma la ejecución PENDING más antigua y la pasa a RUNNING, de forma atómica.
 // FOR UPDATE SKIP LOCKED hace que varios workers no se pisen: si otro ya bloqueó esa fila, se salta
 // a la siguiente en vez de esperar. Devuelve nil si no hay nada pendiente.
