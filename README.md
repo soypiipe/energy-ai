@@ -171,7 +171,7 @@ Todas requieren `Authorization: Bearer <token>` salvo las dos primeras.
   por ventanas y guardar el baseline.
 - Los umbrales se calibraron con estos datos; con otra flota habría que ajustarlos o aprenderlos.
 - No se valida que los números del texto del LLM coincidan con la evidencia (solo forma y longitud);
-  por eso el prompt le prohíbe inventar cifras y la plantilla es la referencia.
+  por eso el prompt le prohíbe inventar cifras, causas y equipos, y limita la acción a una verificación genérica por tipo; la plantilla es la referencia.
 - El límite de intentos de login es en memoria (un solo proceso).
 
 ## Siguientes pasos

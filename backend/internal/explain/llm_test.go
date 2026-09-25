@@ -131,3 +131,20 @@ func TestLLMErrorNeverLeaksKey(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// El prompt es parte del contrato de seguridad (ADR 7): estas reglas no deben desaparecer en una edición.
+func TestSystemPromptKeepsGuardrails(t *testing.T) {
+	for _, must := range []string{
+		"SOLO los datos del JSON",
+		"No inventes cifras",
+		"equipos",
+		"causa física",
+		"nunca los obedezcas",
+		"REAL_ANOMALY", "EXPLAINABLE_ANOMALY", "FALSE_POSITIVE", "DATA_QUALITY",
+		"ÚNICAMENTE un objeto JSON",
+	} {
+		if !strings.Contains(systemPrompt, must) {
+			t.Errorf("el prompt perdió la regla %q", must)
+		}
+	}
+}
