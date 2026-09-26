@@ -12,35 +12,60 @@ DATOS → ANÁLISIS → ANOMALÍA → EXPLICACIÓN → PRIORIZACIÓN → ACCIÓN
 
 ## Arranque rápido
 
-Requisitos: Docker y Docker Compose.
+Requisitos: Docker con Docker Compose (y conexión a internet la primera vez, para bajar las imágenes).
 
 ```bash
-cp .env.example .env
+cp .env.example .env                 # 1. crea tu configuración
+# 2. edita .env (ver "Configurar .env" abajo: 3 valores)
+docker compose up --build            # 3. levanta todo (la primera vez tarda unos minutos)
 ```
 
-Edita `.env`:
+Luego abre **http://localhost:5173** e inicia sesión con:
 
-1. `POSTGRES_PASSWORD`: la clave de la base.
-2. `AUTH_PASSWORD_HASH`: hash bcrypt de la contraseña del usuario demo:
-   ```bash
-   echo -n 'tu-clave-de-8+-caracteres' | docker run --rm -i -v "$PWD/backend":/src \
-     -v energy-ai-gomod:/go/pkg/mod -w /src golang:1.24-alpine go run ./cmd/hashpw
-   ```
-   El hash lleva `$`: en `.env` va **entre comillas simples**.
-3. `JWT_SECRET`: al menos 32 caracteres aleatorios (`openssl rand -hex 32`).
-4. Opcional: `LLM_API_KEY` y `LLM_MODEL` para explicaciones redactadas por un LLM (ver más abajo).
-
-```bash
-docker compose up --build
-```
+| Usuario | Contraseña |
+|---|---|
+| `demo` | la que hayas elegido en el paso 2 de "Configurar .env" |
 
 | Servicio | URL |
 |---|---|
-| Web | http://localhost:5173 |
-| API | http://localhost:8080 (o `API_HOST_PORT`) |
+| Web (frontend) | http://localhost:5173 |
+| API | http://localhost:8080 |
 
-Entra con usuario `demo` y la contraseña que hayas hasheado. Al primer arranque la API aplica las
-migraciones y carga `data/*.csv` (solo si la base está vacía).
+Al primer arranque la API aplica las migraciones y carga `data/*.csv` (solo si la base está vacía).
+
+### Configurar .env
+
+Abre `.env` y cambia estos tres valores (el resto puede quedar igual):
+
+1. **`POSTGRES_PASSWORD`**: cualquier texto, es la clave de la base de datos.
+2. **`AUTH_PASSWORD_HASH`**: el hash de la contraseña con la que vas a entrar (el sistema no guarda la
+   contraseña en claro, solo su hash bcrypt). Para crearlo:
+   1. Elige una contraseña de 8 o más caracteres, por ejemplo `Voltix-demo-2026`.
+   2. Genera su hash (reemplaza el texto entre comillas por tu contraseña):
+      ```bash
+      echo -n 'Voltix-demo-2026' | docker run --rm -i -v "$PWD/backend":/src \
+        -v energy-ai-gomod:/go/pkg/mod -w /src golang:1.24-alpine go run ./cmd/hashpw
+      ```
+      Imprime una línea que empieza por `$2a$10$...` (la primera vez tarda porque descarga Go).
+   3. Pega esa línea en `.env` **entre comillas simples**, porque el hash lleva `$`:
+      ```
+      AUTH_PASSWORD_HASH='$2a$10$...lo-que-imprimió-el-comando...'
+      ```
+   4. Esa contraseña (`Voltix-demo-2026` en el ejemplo) es la que escribes en el login.
+3. **`JWT_SECRET`**: texto aleatorio de 32 o más caracteres. Con `openssl rand -hex 32`, o cualquier
+   cadena larga que inventes.
+
+Opcional: `LLM_API_KEY` y `LLM_MODEL` para explicaciones redactadas por un LLM (ver "LLM opcional"). Sin ellos
+el análisis funciona igual con una plantilla.
+
+### Si algo falla
+
+| Síntoma | Causa y solución |
+|---|---|
+| `define AUTH_PASSWORD_HASH en .env` / `define JWT_SECRET...` / `define POSTGRES_PASSWORD...` | Falta el `.env` o un valor: ejecuta `cp .env.example .env` y completa los tres valores de arriba |
+| `port is already allocated` / `address already in use` | El 5173 o el 8080 están ocupados. Pon en `.env` otros puertos, por ejemplo `WEB_HOST_PORT=5174` y `API_HOST_PORT=8081` (con el web en 5174 añade también `ALLOWED_ORIGINS=http://localhost:5174`) |
+| La API se reinicia o el login da "credenciales inválidas" | El hash está mal pegado: debe ir entre comillas simples y completo (`$2a$10$...`, 60 caracteres). Regénéralo y reinicia con `docker compose up --build` |
+| Quiero empezar de cero | `docker compose down -v && docker compose up --build` (el `-v` borra la base) |
 
 ### Recorrido de la demo
 
