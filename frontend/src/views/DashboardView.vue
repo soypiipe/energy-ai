@@ -14,8 +14,10 @@ import SeverityTag from '@/components/SeverityTag.vue'
 import TypeTag from '@/components/TypeTag.vue'
 import { useAnalysis } from '@/composables/useAnalysis'
 import { axisStyle, C, tooltipStyle } from '@/utils/chart'
-import { fmtAgo, fmtInt, fmtKwh, fmtLocal, fmtPct, meterTitle } from '@/utils/format'
+import { fmtAgo, fmtInt, fmtKwh, fmtLocal, fmtLocalInstant, fmtPct, meterTitle } from '@/utils/format'
 import { METER_STATUS } from '@/utils/labels'
+
+const ANALYSIS_STATUS: Record<string, string> = { COMPLETED: 'Completado', RUNNING: 'En curso', PENDING: 'En cola', FAILED: 'Falló' }
 
 const router = useRouter()
 const { running, version } = useAnalysis()
@@ -132,22 +134,27 @@ function openMeter(p: { dataIndex: number }) {
         <span style="color: var(--warn)">● {{ summary.meters.alert }} alerta</span>
         <span style="color: var(--crit)">● {{ summary.meters.critical }} crítico</span>
       </KpiCard>
-      <KpiCard label="Consumo últimas 24 h" :value="fmtKwh(summary.consumption.current_kwh)" icon="pi-chart-line" :tone="variationTone">
-        {{ fmtPct(summary.consumption.variation_pct) }} vs. baseline ({{ fmtKwh(summary.consumption.baseline_kwh) }}/día)
+      <KpiCard label="Consumo total del periodo" :value="fmtKwh(summary.consumption.total_kwh)" icon="pi-chart-line" :tone="variationTone">
+        Últimas 24 h: {{ fmtKwh(summary.consumption.current_kwh) }} ({{ fmtPct(summary.consumption.variation_pct) }} vs. baseline)
       </KpiCard>
-      <KpiCard label="Anomalías abiertas" :value="fmtInt(summary.anomalies.open)" icon="pi-exclamation-triangle"
-        :tone="summary.anomalies.open > 0 ? 'crit' : 'ok'">
-        <template v-if="summary.anomalies.total > 0">
-          {{ summary.anomalies.by_severity.HIGH ?? 0 }} alta · {{ summary.anomalies.by_severity.MEDIUM ?? 0 }} media · {{ summary.anomalies.by_severity.LOW ?? 0 }} baja
-        </template>
+      <KpiCard label="Anomalías IA detectadas" :value="fmtInt(summary.anomalies.total)" icon="pi-exclamation-triangle"
+        :tone="summary.anomalies.total > 0 ? 'warn' : 'ok'">
+        <template v-if="summary.anomalies.total > 0">{{ summary.anomalies.open }} abiertas</template>
         <template v-else>Sin análisis todavía</template>
       </KpiCard>
-      <KpiCard label="Último análisis" :value="summary.last_analysis ? fmtAgo(summary.last_analysis.finished_at) : '—'" icon="pi-clock" compact>
-        {{ summary.last_analysis ? 'Motor estadístico + explicación IA' : 'Nunca se ha ejecutado' }}
+      <KpiCard label="Alta prioridad" :value="fmtInt(summary.anomalies.high_priority)" icon="pi-flag-fill"
+        :tone="summary.anomalies.high_priority > 0 ? 'crit' : 'ok'">
+        Severidad alta · {{ summary.anomalies.by_severity.MEDIUM ?? 0 }} media · {{ summary.anomalies.by_severity.LOW ?? 0 }} baja
+      </KpiCard>
+      <KpiCard label="Confianza IA" :value="summary.anomalies.total > 0 ? Math.round(summary.anomalies.avg_confidence * 100) + '%' : '—'" icon="pi-verified">
+        Promedio sobre las anomalías detectadas
+      </KpiCard>
+      <KpiCard label="Último análisis" :value="summary.last_analysis?.finished_at ? fmtLocalInstant(summary.last_analysis.finished_at) : '—'" icon="pi-clock" compact>
+        {{ summary.last_analysis ? (ANALYSIS_STATUS[summary.last_analysis.status] ?? summary.last_analysis.status) + ' · ' + fmtAgo(summary.last_analysis.finished_at) : 'Nunca se ha ejecutado' }}
       </KpiCard>
     </div>
     <div class="kpis" v-else-if="loading">
-      <Skeleton v-for="i in 4" :key="i" height="112px" border-radius="12px" />
+      <Skeleton v-for="i in 6" :key="i" height="112px" border-radius="12px" />
     </div>
 
     <div class="cols">
@@ -210,7 +217,7 @@ function openMeter(p: { dataIndex: number }) {
 .action .pi { color: var(--accent); margin-top: 4px; }
 .hero-cta { display: flex; gap: 10px; flex-wrap: wrap; }
 
-.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .cols { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; }
 
 .legend { list-style: none; margin: 8px 0 0; padding: 0; display: flex; gap: 16px; font-size: 12px; color: var(--muted); }

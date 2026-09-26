@@ -29,6 +29,14 @@ export function fmtLocal(ts: string, withTime = true): string {
   return withTime ? `${date} ${m[4]}:${m[5]}` : date
 }
 
+/** Instante real (finished_at, UTC) → "26 sep 13:31" en la zona del navegador. */
+export function fmtLocalInstant(iso: string): string {
+  const d = new Date(iso)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${hh}:${mm}`
+}
+
 /** Instantes reales (created_at/finished_at, UTC) → "hace 3 min". */
 export function fmtAgo(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return '—'

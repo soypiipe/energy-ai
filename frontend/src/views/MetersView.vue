@@ -41,8 +41,13 @@ watch(version, load)
 
 // Orden de triage por defecto: primero lo más grave.
 const RANK: Record<MeterStatus, number> = { CRITICAL: 3, ALERT: 2, OK: 1 }
+// Severidad real de la anomalía (campo `severity` de la API): HIGH > MEDIUM > LOW > sin anomalía.
+const SEV_RANK: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 }
 const rows = computed(() =>
-  meters.value.map((m) => ({ ...m, rank: RANK[m.status] * 1000 + Math.min(Math.abs(m.variation_pct), 999) })),
+  meters.value.map((m) => {
+    const tie = Math.min(Math.abs(m.variation_pct), 999) // desempata dentro del mismo nivel
+    return { ...m, rank: RANK[m.status] * 1000 + tie, sevRank: (m.severity ? SEV_RANK[m.severity] : 0) * 1000 + tie }
+  }),
 )
 
 const counts = computed(() => ({
@@ -95,7 +100,7 @@ function open(e: { data: MeterSummary }) {
         v-else
         :value="visible"
         data-key="meter_id"
-        sort-field="rank"
+        sort-field="sevRank"
         :sort-order="-1"
         removable-sort
         selection-mode="single"
@@ -113,13 +118,13 @@ function open(e: { data: MeterSummary }) {
         <Column field="rank" header="Estado" sortable>
           <template #body="{ data }"><StatusTag :status="data.status" /></template>
         </Column>
-        <Column header="Anomalía IA">
+        <Column field="sevRank" header="Anomalía IA" sortable>
           <template #body="{ data }">
             <div v-if="data.anomaly_type" class="an"><TypeTag :type="data.anomaly_type" /><SeverityTag v-if="data.severity" :severity="data.severity" /></div>
             <span v-else class="muted">—</span>
           </template>
         </Column>
-        <Column field="current_kwh" header="Últimas 24 h" sortable>
+        <Column field="current_kwh" header="Consumo" sortable>
           <template #body="{ data }"><span class="mono">{{ fmtKwh(data.current_kwh) }}</span></template>
         </Column>
         <Column field="baseline_kwh" header="Baseline / día" sortable>

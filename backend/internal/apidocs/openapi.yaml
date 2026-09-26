@@ -782,6 +782,8 @@ components:
           properties:
             total: { type: integer, example: 4 }
             open: { type: integer, example: 4 }
+            high_priority: { type: integer, example: 2, description: Anomalías con severidad HIGH. }
+            avg_confidence: { type: number, example: 0.82, description: Confianza media de la IA (0-1). 0 si no hay anomalías. }
             by_severity:
               type: object
               additionalProperties: { type: integer }
@@ -804,4 +806,5 @@ components:
           description: Último análisis completado. `null` si nunca se ha ejecutado.
           properties:
             id: { type: string, format: uuid }
+            status: { type: string, example: COMPLETED }
             finished_at: { type: string, format: date-time, nullable: true }

@@ -91,9 +91,9 @@ export interface AnalysisRun {
 export interface DashboardSummary {
   meters: { total: number; ok: number; alert: number; critical: number }
   consumption: { total_kwh: number; current_kwh: number; baseline_kwh: number; variation_pct: number }
-  anomalies: { total: number; open: number; by_severity: Record<string, number>; by_type: Record<string, number> }
+  anomalies: { total: number; open: number; high_priority: number; avg_confidence: number; by_severity: Record<string, number>; by_type: Record<string, number> }
   top_priority: { anomaly_id: string; meter_id: string; type: AnomalyType; severity: Severity } | null
-  last_analysis: { id: string; finished_at: string | null } | null
+  last_analysis: { id: string; status: string; finished_at: string | null } | null
 }
 
 export interface LoginResponse {

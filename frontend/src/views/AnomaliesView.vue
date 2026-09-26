@@ -103,6 +103,9 @@ function open(e: { data: Anomaly }) {
           <Column header="Estado">
             <template #body="{ data }"><span class="st" :class="data.status.toLowerCase()">{{ ANOMALY_STATUS[data.status as keyof typeof ANOMALY_STATUS] }}</span></template>
           </Column>
+          <Column header="Acción" style="min-width: 260px">
+            <template #body="{ data }"><span class="why">{{ data.recommended_action }}</span></template>
+          </Column>
           <Column header="Por qué" style="min-width: 260px">
             <template #body="{ data }"><span class="why muted">{{ data.reason }}</span></template>
           </Column>

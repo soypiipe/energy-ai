@@ -25,11 +25,11 @@ func TestBuild(t *testing.T) {
 		{MeterID: "M-109", Status: meter.StatusCritical, TotalKWh: 300, CurrentKWh: 20, BaselineKWh: 10},
 	}
 	anomalies := []analysis.Anomaly{
-		{ID: "a1", MeterID: "M-109", Type: "REAL_ANOMALY", Severity: "HIGH", Status: analysis.AnomalyOpen},
-		{ID: "a2", MeterID: "M-104", Type: "EXPLAINABLE_ANOMALY", Severity: "MEDIUM", Status: analysis.AnomalyResolved},
+		{ID: "a1", MeterID: "M-109", Type: "REAL_ANOMALY", Severity: "HIGH", Confidence: 0.9, Status: analysis.AnomalyOpen},
+		{ID: "a2", MeterID: "M-104", Type: "EXPLAINABLE_ANOMALY", Severity: "MEDIUM", Confidence: 0.8, Status: analysis.AnomalyResolved},
 	}
 	fin := time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)
-	s := Build(meters, anomalies, &analysis.Run{ID: "run1", FinishedAt: &fin})
+	s := Build(meters, anomalies, &analysis.Run{ID: "run1", Status: "COMPLETED", FinishedAt: &fin})
 
 	if s.Meters != (MeterCounts{Total: 3, OK: 1, Alert: 1, Critical: 1}) {
 		t.Errorf("medidores = %+v", s.Meters)
@@ -37,13 +37,14 @@ func TestBuild(t *testing.T) {
 	if c := s.Consumption; c.TotalKWh != 600 || c.CurrentKWh != 45 || c.BaselineKWh != 30 || c.VariationPct != 50 {
 		t.Errorf("consumo = %+v", c)
 	}
-	if a := s.Anomalies; a.Total != 2 || a.Open != 1 || a.BySeverity["HIGH"] != 1 || a.ByType["REAL_ANOMALY"] != 1 {
+	if a := s.Anomalies; a.Total != 2 || a.Open != 1 || a.BySeverity["HIGH"] != 1 || a.ByType["REAL_ANOMALY"] != 1 ||
+		a.HighPriority != 1 || a.AvgConfidence != 0.85 {
 		t.Errorf("anomalías = %+v", a)
 	}
 	if s.TopPriority == nil || s.TopPriority.MeterID != "M-109" || s.TopPriority.AnomalyID != "a1" {
 		t.Errorf("top = %+v", s.TopPriority)
 	}
-	if s.LastAnalysis == nil || s.LastAnalysis.ID != "run1" {
+	if s.LastAnalysis == nil || s.LastAnalysis.ID != "run1" || s.LastAnalysis.Status != "COMPLETED" {
 		t.Errorf("último análisis = %+v", s.LastAnalysis)
 	}
 }

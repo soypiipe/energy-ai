@@ -39,10 +39,12 @@ type Consumption struct {
 
 // AnomalyCounts cuenta las anomalías del último análisis.
 type AnomalyCounts struct {
-	Total      int            `json:"total"`
-	Open       int            `json:"open"`
-	BySeverity map[string]int `json:"by_severity"`
-	ByType     map[string]int `json:"by_type"`
+	Total         int            `json:"total"`
+	Open          int            `json:"open"`
+	HighPriority  int            `json:"high_priority"`  // severidad HIGH
+	AvgConfidence float64        `json:"avg_confidence"` // confianza media de la IA (0-1); 0 si no hay anomalías
+	BySeverity    map[string]int `json:"by_severity"`
+	ByType        map[string]int `json:"by_type"`
 }
 
 type TopPriority struct {
@@ -54,6 +56,7 @@ type TopPriority struct {
 
 type LastAnalysisAt struct {
 	ID         string     `json:"id"`
+	Status     string     `json:"status"`
 	FinishedAt *time.Time `json:"finished_at"`
 }
 
@@ -84,19 +87,25 @@ func Build(meters []meter.Summary, anomalies []analysis.Anomaly, last *analysis.
 	s.Consumption.VariationPct = meter.VariationPct(s.Consumption.CurrentKWh, s.Consumption.BaselineKWh)
 
 	s.Anomalies.Total = len(anomalies)
+	var confSum float64
 	for _, a := range anomalies {
 		if a.Status == analysis.AnomalyOpen {
 			s.Anomalies.Open++
 		}
+		if a.Severity == "HIGH" {
+			s.Anomalies.HighPriority++
+		}
+		confSum += a.Confidence
 		s.Anomalies.BySeverity[a.Severity]++
 		s.Anomalies.ByType[a.Type]++
 	}
 	if len(anomalies) > 0 {
+		s.Anomalies.AvgConfidence = math.Round(confSum/float64(len(anomalies))*100) / 100
 		top := anomalies[0]
 		s.TopPriority = &TopPriority{AnomalyID: top.ID, MeterID: top.MeterID, Type: top.Type, Severity: top.Severity}
 	}
 	if last != nil {
-		s.LastAnalysis = &LastAnalysisAt{ID: last.ID, FinishedAt: last.FinishedAt}
+		s.LastAnalysis = &LastAnalysisAt{ID: last.ID, Status: last.Status, FinishedAt: last.FinishedAt}
 	}
 	return s
 }
