@@ -69,8 +69,11 @@ el análisis funciona igual con una plantilla.
 
 ### Recorrido de la demo
 
-Login → **Dashboard** → **Medidores** → detalle de **M-109** → **Run AI Analysis** → anomalía →
-explicación y acción recomendada.
+1. **Login** con `demo` y tu contraseña.
+2. **Dashboard**: KPIs de la flota. Antes de analizar aún no hay anomalías.
+3. **Medidores**: tabla con los 12 medidores; abre el detalle de **M-109**.
+4. **Run AI Analysis**: encola el análisis y muestra el progreso paso a paso.
+5. **Anomalías**: lista priorizada; abre una para ver la evidencia, la explicación y la acción recomendada.
 
 Resultado esperado del análisis sobre los datos incluidos:
 
@@ -142,26 +145,67 @@ modelo compatible con la API de OpenAI a partir de la evidencia del motor. Si fa
 respuesta inválida) se usa la plantilla automáticamente. La pantalla de investigación indica quién
 redactó cada explicación.
 
-## Probar con otro dataset
+## Datos: cómo se cargan y cómo cambiarlos
 
-Los CSV se montan en la API como volumen de solo lectura (`./data:/app/data:ro`), así que no hace falta
-reconstruir la imagen para cambiar de datos. (El `COPY data/` del Dockerfile queda como respaldo para quien
-ejecute la imagen sin Compose.)
+### Flujo de los datos
 
-1. Reemplaza `data/readings.csv` y `data/events.csv` conservando las mismas columnas y el mismo formato de fecha
-   que los originales (`2026-09-01 00:00:00` en lecturas; `2026-09-11 00:00` en eventos).
-2. Recarga con una base limpia: `docker compose down -v && docker compose up --build`.
-   El `-v` borra el volumen de Postgres: el seed solo carga datos si la base está vacía, así que sin él se
-   seguirían viendo los datos anteriores.
+```
+data/readings.csv ─┐                                   ┌─► Dashboard / Medidores
+data/events.csv   ─┴─► SEED (al arrancar la API) ─► PostgreSQL ─► [Run AI Analysis] ─► Anomalías + explicación
+                       solo si la base está vacía        (lecturas, eventos)        (análisis nuevo cada vez que lo pulsas)
+```
 
-Notas:
+1. **Los CSV** viven en `data/` y se montan en la API como volumen de solo lectura (`./data:/app/data:ro`).
+2. **El seed** (carga inicial) **no es un comando aparte**: corre solo, cada vez que arranca la API, después de
+   aplicar las migraciones. Si la tabla de medidores está **vacía**, lee los CSV y los guarda en Postgres; si ya
+   tiene datos, no hace nada (así reiniciar no duplica). El log de la API lo dice:
+   `datos listos seed_aplicado=true` (cargó) o `seed_aplicado=false` (ya había datos).
+3. **Postgres** guarda lecturas, eventos y, después, los análisis y anomalías. Vive en el volumen `pgdata`,
+   que sobrevive a `docker compose down` y a los reinicios.
+4. **Run AI Analysis** (botón en la web) lee de Postgres, no de los CSV.
 
-- **CSV mal formado:** el seed valida el encabezado de forma estricta. Si no coincide, la API **no arranca** y el log dice
-  qué se esperaba y qué llegó, en lugar de cargar datos corruptos. Ejemplo:
-  `readings.csv: encabezado inesperado: [... consumo ...] (se esperaba [... consumption_kwh ...])`.
-- **Umbrales del motor:** los umbrales de detección (z robusto, cambio del 25 %, banda de coherencia física kWh/V·I·FP,
-  ventana de baseline de 7 días) están calibrados para el dataset original de 12 medidores durante 14 días. Con un dataset muy
-  distinto pueden necesitar ajustes. Las constantes están al inicio de cada detector en `backend/internal/analysis/engine`.
+Consecuencia importante: **editar los CSV con todo ya levantado no cambia nada por sí solo**, porque la base ya
+tiene datos y el seed no vuelve a correr. Para que los cambios se vean hay que recargar (siguiente sección).
+
+### Cambiar los datos con todo ya montado
+
+1. Edita o reemplaza `data/readings.csv` y/o `data/events.csv` (formato abajo). No hace falta reconstruir nada.
+2. Borra la base y vuelve a levantar, lo que fuerza al seed a correr de nuevo:
+   ```bash
+   docker compose down -v && docker compose up --build
+   ```
+   `-v` elimina el volumen `pgdata` (**se pierden también los análisis y anomalías ya generados**). Sin `-v` la
+   base conserva los datos viejos y el seed no carga los nuevos.
+3. Comprueba que cargaron: en `docker compose logs api` busca `seed_aplicado=true`, o entra a la web y revisa
+   **Medidores** (debe aparecer la cantidad de medidores de tu CSV).
+4. Pulsa **Run AI Analysis** para analizar los datos nuevos.
+
+Para volver a los datos originales: `git checkout -- data` y repite el paso 2.
+
+### Formato de los CSV
+
+Las columnas y su orden tienen que ser exactamente estos:
+
+| Archivo | Encabezado | Formato de fecha |
+|---|---|---|
+| `data/readings.csv` | `meter_id,timestamp,consumption_kwh,voltage_v,current_a,power_factor,status` | `2026-09-01 00:00:00` |
+| `data/events.csv` | `meter_id,event_timestamp,event_type,description` | `2026-09-11 00:00` |
+
+Un `event_type` explica una anomalía si es `OPERATIONAL_CHANGE` o `SCHEDULED_OUTAGE`; `UNKNOWN` no.
+Las lecturas son una por medidor y por hora, con al menos 7 días de historia (el análisis usa los primeros 7 como baseline).
+
+### Si el CSV está mal
+
+El seed valida el encabezado de forma estricta y cada número y fecha. Si algo no cuadra, la API **no arranca** y el
+log dice qué se esperaba y qué llegó, en lugar de cargar datos corruptos. Ejemplo:
+`readings.csv: encabezado inesperado: [... consumo ...] (se esperaba [... consumption_kwh ...])`.
+Corrige el CSV y vuelve a correr `docker compose down -v && docker compose up --build`.
+
+### Límites al cambiar de dataset
+
+Los umbrales de detección (z robusto, cambio del 25 %, banda de coherencia física kWh/V·I·FP, ventana de baseline de 7
+días) están calibrados para el dataset original de 12 medidores durante 14 días. Con un dataset muy distinto pueden
+necesitar ajustes. Las constantes están al inicio de cada detector en `backend/internal/analysis/engine`.
 
 ## Desarrollo
 
