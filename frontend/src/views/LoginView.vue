@@ -43,7 +43,6 @@ async function submit() {
     <section class="card" aria-labelledby="login-title">
       <BrandLogo :size="40" />
       <h1 id="login-title">Bienvenido de nuevo</h1>
-      <p class="muted lead">Sabe qué medidor atender primero, y por qué.</p>
 
       <Message v-if="expired && !error" severity="warn" :closable="false" class="msg">Tu sesión expiró. Inicia sesión otra vez.</Message>
       <Message v-if="error" severity="error" :closable="false" class="msg" role="alert">{{ error }}</Message>
